@@ -12,7 +12,7 @@ AFTER (batch_size=100):  152,135 TPS
 
 ## 📋 구축된 벤치마크 테스트
 
-6개의 체계적인 성능 검증 테스트가 준비되었습니다:
+7개의 체계적인 성능 검증 테스트가 준비되었습니다:
 
 | # | 테스트 | Before → After | 예상 효과 | 파일 |
 |---|--------|---------------|----------|------|
@@ -22,6 +22,7 @@ AFTER (batch_size=100):  152,135 TPS
 | 4 | **커버링 인덱스** | 일반 → 커버링 | 3배 | `benchmark-04-covering-index.sh` |
 | 5 | **work_mem** | 4MB → 256MB | 5배 | `benchmark-05-work-mem.sh` |
 | 6 | **격리 수준** | RC → RR | 0.9배 | `benchmark-06-isolation-level.sh` |
+| 7 | **INCLUDE 절** | 복합 → INCLUDE | 3배 (쓰기) | `benchmark-07-include-detailed.sh` |
 
 ## 🚀 실행 방법
 
@@ -54,6 +55,9 @@ cd /home/roach/db-study/load-test
 
 # 6. 격리 수준 효과
 ./scripts/benchmark-06-isolation-level.sh
+
+# 7. INCLUDE 절 상세 비교
+./scripts/benchmark-07-include-detailed.sh
 ```
 
 ## 💡 각 테스트의 핵심 포인트
@@ -171,6 +175,43 @@ work_mem = (Total RAM - shared_buffers) / max_connections / 4
 **예상 결과**:
 - 쓰기: RC 8,000 TPS vs RR 7,000 TPS (10% 감소)
 - 읽기: 큰 차이 없음
+
+---
+
+### 7️⃣ INCLUDE 절 상세 비교 (실제 검증 완료)
+
+**이유**: Internal Node 크기 최소화, message 정렬 제거
+
+**3가지 케이스 비교**:
+1. **일반 인덱스**: `(level, service)` - Heap Fetch 발생
+2. **복합 인덱스**: `(level, service, message)` - message가 모든 B-tree 레벨에 포함
+3. **INCLUDE 인덱스**: `(level, service) INCLUDE (message)` - message는 Leaf에만
+
+**결과** (25M 행 기준):
+- 읽기 성능:
+  - 일반: 27.54 QPS
+  - 복합: 19.64 QPS
+  - INCLUDE: 26.79 QPS (복합보다 **36% 빠름**)
+
+- 쓰기 성능:
+  - 일반: 112,093 TPS
+  - 복합: 46,203 TPS
+  - INCLUDE: 140,646 TPS (복합보다 **204% 빠름, 3배 이상!**)
+
+- 인덱스 크기:
+  - 일반: 169 MB (가장 작음)
+  - 복합: 183 MB
+  - INCLUDE: 189 MB
+
+**핵심 인사이트**:
+- INCLUDE는 message를 정렬하지 않음 → INSERT가 엄청나게 빠름
+- Internal Node가 작아서 캐시 효율 증가 → 읽기도 빠름
+- Heap Fetch 제거 → Index-Only Scan 가능
+
+**실무 적용**:
+- ✅ INCLUDE 사용: WHERE 절에 안 쓰는 컬럼을 SELECT에 포함할 때
+- ✅ 복합 인덱스: WHERE 절에 모든 컬럼을 사용할 때
+- 📊 **쓰기가 많은 시스템에서 INCLUDE는 필수!**
 
 ---
 
