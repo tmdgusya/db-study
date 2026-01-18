@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: loadtest-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-loadtest}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=64MB
+      -c maintenance_work_mem=128MB
+      -c effective_cache_size=1536MB
+      -c max_connections=100
+      -c wal_buffers=16MB
+      -c checkpoint_timeout=10min
+      -c max_wal_size=1GB
+      -c min_wal_size=80MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c default_statistics_target=100
+      -c log_statement=none
+      -c log_duration=off
+      -c log_min_duration_statement=1000
+      -c autovacuum=on
+      -c autovacuum_max_workers=3
+      -c autovacuum_naptime=10s
+      -c shared_preload_libraries=pg_stat_statements
+      -c max_worker_processes=8
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+
+    # 리소스 제한 (성능 제어)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'           # 2 CPU 코어
+          memory: 2G            # 2GB RAM
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+    # 성능 최적화를 위한 커널 설정
+    shm_size: 256mb
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  write-server:
+    build:
+      context: ./write-server
+      dockerfile: Dockerfile
+    container_name: loadtest-write-server
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-loadtest}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SERVER_PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  read-server:
+    build:
+      context: ./read-server
+      dockerfile: Dockerfile
+    container_name: loadtest-read-server
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-loadtest}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SERVER_PORT: 8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+volumes:
+  postgres_data:
